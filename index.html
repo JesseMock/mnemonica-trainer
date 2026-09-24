@@ -1,0 +1,61 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mnemonica Voice Trainer</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,system-ui,sans-serif;background:#12151c;color:#eef;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:20px}
+h1{font-size:1.4rem;margin:8px 0 4px}p.sub{color:#99a;margin:0 0 20px;font-size:.9rem;text-align:center}
+.modes{display:grid;gap:12px;width:100%;max-width:420px}
+button{font:inherit;border:0;border-radius:14px;padding:18px;font-size:1.1rem;font-weight:600;cursor:pointer;color:#fff}
+.m1{background:#3b6fd8}.m2{background:#8a4fd8}.m3{background:#d8733b}.stop{background:#c33;margin-top:16px}.sec{background:#2a2f3a}
+#card{font-size:3.2rem;font-weight:700;margin:24px 0 8px;min-height:4rem;text-align:center}
+#status{color:#9ab;min-height:1.4em;text-align:center}#heard{color:#ccd;font-style:normal;min-height:1.4em;margin-top:6px;text-align:center}
+#fb{font-size:1.3rem;min-height:1.8em;margin-top:10px;text-align:center}.ok{color:#5d5}.bad{color:#f66}
+#score{margin-top:14px;color:#bbc}.row{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;justify-content:center}.row button{padding:12px 16px;font-size:.95rem}
+#train{display:none;flex-direction:column;align-items:center;width:100%;max-width:420px}.help{color:#778;font-size:.8rem;margin-top:24px;text-align:center;max-width:420px}
+.red{color:#f55}
+</style></head><body>
+<h1>Mnemonica Voice Trainer</h1><p class="sub">Tap a mode, allow the microphone, and answer out loud.</p>
+<div class="modes" id="menu">
+<button class="m1" onclick="start(1)">Number → Card<br><small>"What is the card at number 3?"</small></button>
+<button class="m2" onclick="start(2)">Card → Number<br><small>"Four of clubs" → you say "one"</small></button>
+<button class="m3" onclick="start(3)">Mix &amp; Match<br><small>Both types, randomly mixed</small></button>
+</div>
+<div id="train">
+<div id="modeName" style="color:#aab"></div><div id="card"></div><div id="status"></div><div id="heard"></div><div id="fb"></div><div id="score"></div>
+<div class="row"><button class="sec" onclick="repeatQ()">Repeat</button><button class="sec" onclick="reveal()">Answer</button><button class="sec" onclick="skip()">Skip</button><button class="sec" id="showBtn" onclick="toggleShow()">Show text: on</button></div>
+<button class="stop" onclick="stopAll()">Stop</button>
+</div>
+<p class="help">Voice commands: "repeat", "skip", "answer", "stop". Keep the screen on. Works best in Chrome or iPhone Safari.</p>
+<script>
+const STACK="4C 2H 7D 3C 4H 6D AS 5H 9S 2S QH 3D QC 8H 6S 5S 9H KC 2D JH 3S 8S 6H TC 5D KD 2C 3H 8D 5C KS JD 8C TS KH JC 7S TH AD 4S 7H 4D AC 9C JS QD 7C QS TD 6C AH 9D".split(" ");
+const RN={A:"Ace",2:"Two",3:"Three",4:"Four",5:"Five",6:"Six",7:"Seven",8:"Eight",9:"Nine",T:"Ten",J:"Jack",Q:"Queen",K:"King"};
+const SN={C:"Clubs",H:"Hearts",D:"Diamonds",S:"Spades"},SY={C:"♣",H:"♥",D:"♦",S:"♠"};
+const name=c=>RN[c[0]]+" of "+SN[c[1]], sym=c=>(c[0]=="T"?"10":c[0])+SY[c[1]];
+const NUMW={zero:0,one:1,won:1,two:2,to:2,too:2,three:3,four:4,for:4,five:5,six:6,seven:7,eight:8,ate:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,twenty:20,thirty:30,forty:40,fifty:50};
+function parseNum(t){t=t.toLowerCase().replace(/-/g," ");let m=t.match(/\d+/);if(m)return +m[0];let s=0,f=false;for(const w of t.split(/\s+/)){if(w in NUMW){s+=NUMW[w];f=true}}return f?s:null}
+const RW=[["A",/\b(ace|aces|a)\b/],["K",/\b(king|kings)\b/],["Q",/\b(queen|queens)\b/],["J",/\b(jack|jacks)\b/],["T",/\b(ten|tens|10)\b/],["9",/\b(nine|9)\b/],["8",/\b(eight|ate|8)\b/],["7",/\b(seven|7)\b/],["6",/\b(six|6|sex)\b/],["5",/\b(five|5)\b/],["4",/\b(four|for|4)\b/],["3",/\b(three|tree|free|3)\b/],["2",/\b(two|to|too|deuce|2)\b/],["A",/\b(one|1)\b/]];
+const SW=[["C",/(club|clover|cloves|clue)/],["H",/(heart|hart)/],["D",/(diamond)/],["S",/(spade|spayed|spaid)/]];
+function parseCard(t){t=t.toLowerCase();let s=null;for(const[k,r]of SW)if(r.test(t)){s=k;break}let r=null;for(const[k,re]of RW)if(re.test(t.replace(/\bof\b/g,""))){r=k;break}return r&&s?r+s:null}
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null,mode=0,q=null,running=false,right=0,total=0,show=true,weights=Array(52).fill(1),listenTimer;
+function say(t,cb){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.rate=1;u.onend=()=>cb&&cb();u.onerror=()=>cb&&cb();speechSynthesis.speak(u)}
+function pick(){let tot=weights.reduce((a,b)=>a+b),r=Math.random()*tot;for(let i=0;i<52;i++){r-=weights[i];if(r<=0)return i}return 51}
+function $(i){return document.getElementById(i)}
+function start(m){if(!SR){alert("Speech recognition isn't supported in this browser. Try Chrome or Safari.");return}mode=m;running=true;right=total=0;$("menu").style.display="none";$("train").style.display="flex";$("modeName").textContent=["","Number → Card","Card → Number","Mix & Match"][m];upd();next()}
+function next(){if(!running)return;const i=pick();const type=mode==3?(Math.random()<.5?1:2):mode;q={i,type,card:STACK[i],num:i+1,tries:0};$("fb").textContent="";$("heard").textContent="";ask()}
+function qText(){return q.type==1?(mode==3?String(q.num):"What is the card at number "+q.num+"?"):name(q.card)}
+function ask(){if(!q)return;$("card").innerHTML=show?(q.type==1?"#"+q.num:`<span class="${"HD".includes(q.card[1])?"red":""}">${sym(q.card)}</span>`):"?";$("status").textContent="Speaking…";say(qText(),listen)}
+function listen(){if(!running)return;rec&&rec.abort();rec=new SR();rec.lang="en-US";rec.interimResults=false;rec.maxAlternatives=5;let got=false;
+rec.onresult=e=>{got=true;const alts=[...e.results[0]].map(a=>a.transcript);handle(alts)};
+rec.onerror=e=>{if(e.error=="not-allowed"){$("status").textContent="Microphone blocked. Allow mic access and try again.";running=false}};
+rec.onend=()=>{if(running&&!got)setTimeout(listen,200)};
+$("status").textContent="Listening… 🎤";try{rec.start()}catch(e){}}
+function handle(alts){const t=alts[0].toLowerCase();$("heard").textContent='Heard: "'+alts[0]+'"';
+if(/\bstop\b|\bquit\b/.test(t))return stopAll();if(/\brepeat\b|\bagain\b/.test(t))return ask();if(/\bskip\b/.test(t))return skip();if(/\banswer\b|\bdon'?t know\b|\bgive up\b/.test(t))return reveal();
+let ok=false;for(const a of alts){if(q.type==1?parseCard(a)==q.card:parseNum(a)==q.num){ok=true;break}}
+total++;if(ok){right++;weights[q.i]=Math.max(.5,weights[q.i]*.7);$("fb").innerHTML='<span class="ok">✓ Correct</span>';upd();say("Correct",next)}
+else{weights[q.i]=Math.min(8,weights[q.i]*2);const ans=q.type==1?name(q.card):String(q.num);$("fb").innerHTML='<span class="bad">✗ '+(q.type==1?sym(q.card):"#"+q.num)+'</span>';upd();say("No, it's "+ans,next)}}
+function reveal(){if(!q)return;weights[q.i]=Math.min(8,weights[q.i]*2);const ans=q.type==1?name(q.card):String(q.num);$("fb").innerHTML='<span class="bad">'+(q.type==1?sym(q.card):"#"+q.num)+'</span>';rec&&rec.abort();say("It's "+ans,next)}
+function skip(){rec&&rec.abort();next()}function repeatQ(){rec&&rec.abort();ask()}
+function toggleShow(){show=!show;$("showBtn").textContent="Show text: "+(show?"on":"off");if(q)$("card").innerHTML=show?(q.type==1?"#"+q.num:sym(q.card)):"?"}
+function upd(){$("score").textContent=`Score: ${right} / ${total}`+(total?` (${Math.round(100*right/total)}%)`:"")}
+function stopAll(){running=false;rec&&rec.abort();speechSynthesis.cancel();$("train").style.display="none";$("menu").style.display="grid";say("Stopped. You got "+right+" out of "+total)}
+</script></body></html>
