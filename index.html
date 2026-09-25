@@ -22,6 +22,7 @@ select,input[type=range]{width:100%}select{font:inherit;padding:8px;border-radiu
 <button class="m4" onclick="show('missedMenu')">Missed Practice <span class="badge" id="mTotal">0</span><br><small>Only the ones you got wrong</small></button>
 <div class="panel">
 <label>Voice speed: <b id="rateVal"></b><input type="range" min="0.7" max="2" step="0.1" id="rate" oninput="setRate(this.value)"></label>
+<label><input type="checkbox" id="hf" onchange="handsFree=this.checked;localStorage.hf=this.checked?1:0"> Hands-free (listens automatically; turn off to tap before each answer)</label>
 <label><input type="checkbox" id="showText" checked onchange="showTxt=this.checked"> Show the question on screen</label>
 </div>
 <p class="help">Say "repeat", "skip", "answer", "missed" or "stop" at any time. Keep the screen on. Works best in Safari or Chrome.</p>
@@ -38,8 +39,9 @@ select,input[type=range]{width:100%}select{font:inherit;padding:8px;border-radiu
 <div class="screen" id="train">
 <div class="c" id="modeName" style="color:#aab"></div>
 <div id="card"></div><div class="c" id="status"></div><div class="c" id="heard"></div><div class="c" id="fb"></div><div class="c" id="score"></div><div class="c help" id="dbg"></div>
+<button class="m1" style="padding:34px;font-size:1.4rem" onclick="if(running)listen(true)">🎤 Tap to answer</button>
 <button class="m4" id="missBtn" onclick="goMissed()">Practice my missed ones <span class="badge" id="mNow">0</span></button>
-<div class="row"><button class="sec" onclick="if(running)listen()">🎤 Tap to talk</button><button class="sec" onclick="repeatQ()">Repeat</button><button class="sec" onclick="reveal()">Answer</button><button class="sec" onclick="skip()">Skip</button></div>
+<div class="row"><button class="sec" onclick="repeatQ()">Repeat</button><button class="sec" onclick="reveal()">Answer</button><button class="sec" onclick="skip()">Skip</button></div>
 <button class="back" style="background:#c33" onclick="stopAll()">Stop</button>
 </div>
 
@@ -54,7 +56,7 @@ const MODES={num:"Number → Card",card:"Card → Number",mix:"Mix & Match",mnum
 /* ---------- parsing ---------- */
 const NUMW={zero:0,one:1,won:1,two:2,to:2,too:2,three:3,four:4,for:4,five:5,six:6,seven:7,eight:8,ate:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,twenty:20,thirty:30,forty:40,fifty:50};
 function parseNum(t){t=t.toLowerCase().replace(/-/g," ");const m=t.match(/\d+/);if(m)return +m[0];let s=0,f=false;for(const w of t.split(/\s+/))if(w in NUMW){s+=NUMW[w];f=true}return f?s:null}
-const RW=[["A",/\b(ace|aces|a)\b/],["K",/\b(king|kings)\b/],["Q",/\b(queen|queens)\b/],["J",/\b(jack|jacks)\b/],["T",/\b(ten|tens|10)\b/],["9",/\b(nine|9)\b/],["8",/\b(eight|ate|8)\b/],["7",/\b(seven|7)\b/],["6",/\b(six|6|sex)\b/],["5",/\b(five|5)\b/],["4",/\b(four|for|4)\b/],["3",/\b(three|tree|free|3)\b/],["2",/\b(two|to|too|deuce|2)\b/],["A",/\b(one|1)\b/]];
+const RW=[["A",/\b(ace|aces|ase|eighth)\b/],["K",/\b(king|kings)\b/],["Q",/\b(queen|queens)\b/],["J",/\b(jack|jacks)\b/],["T",/\b(ten|tens|10)\b/],["9",/\b(nine|9)\b/],["8",/\b(eight|ate|8)\b/],["7",/\b(seven|7)\b/],["6",/\b(six|6|sex)\b/],["5",/\b(five|5)\b/],["4",/\b(four|for|4)\b/],["3",/\b(three|tree|free|3)\b/],["2",/\b(two|to|too|deuce|2)\b/],["A",/\b(one|1)\b/]];
 const SW=[["C",/(club|clover|clove|clue)/],["H",/(heart|hart)/],["D",/(diamond)/],["S",/(spade|spayed|spaid)/]];
 function parseCard(t){t=t.toLowerCase();let s=null;for(const[k,r]of SW)if(r.test(t)){s=k;break}const u=t.replace(/\bof\b/g,"");let r=null;for(const[k,re]of RW)if(re.test(u)){r=k;break}return r&&s?r+s:null}
 
@@ -103,21 +105,21 @@ function ask(){if(!q||!running)return;stopRec();
  $("status").textContent="Speaking…";
  q.type=="num"?playSeq(["n"+q.num],[String(q.num)],listen):playSeq(["c"+q.num],[cname(q.card)],listen)}
 /* fresh recognizer per question; always wait for the old one to fully close before speaking or listening */
-let accepting=false,listenTok=0,closing=null;
+let accepting=false,listenTok=0,closing=null,fails=0,handsFree=localStorage.hf!=="0";
 function dbg(m){const d=$("dbg");if(d)d.textContent=m}
 function closeRec(){if(!rec)return Promise.resolve();if(closing)return closing;const r=rec;
  closing=new Promise(res=>{let ok=false;const f=()=>{if(ok)return;ok=true;rec=rec===r?null:rec;closing=null;res()};r.onend=f;r.onresult=null;r.onerror=null;try{r.stop()}catch(e){f()}setTimeout(()=>{try{r.abort()}catch(e){}f()},800)});return closing}
 function stopRec(){accepting=false;listenTok++;return closeRec()}
 function killMic(){running=false;stopRec()}
 function startMic(){}
-function listen(){if(!running)return;const my=++listenTok;accepting=false;closeRec().then(()=>{if(my!==listenTok||!running)return;openRec(my)})}
+function listen(fromTap){if(!running)return;if(!handsFree&&!fromTap){$("status").textContent="Tap the big button and say your answer";return}if(fromTap)fails=0;const my=++listenTok;accepting=false;closeRec().then(()=>{if(my!==listenTok||!running)return;openRec(my)})}
 function openRec(my){const r=new SR();rec=r;r.lang="en-US";r.continuous=false;r.interimResults=true;r.maxAlternatives=3;const t0=Date.now();
  r.onstart=()=>{dbg("mic on "+(Date.now()-t0)+"ms")};
- r.onaudiostart=()=>{if(my===listenTok){accepting=true;$("status").textContent="Listening… 🎤"}};
+ r.onaudiostart=()=>{fails=0;if(my===listenTok){accepting=true;$("status").textContent="Listening… 🎤"}};
  r.onresult=e=>{if(my!==listenTok||!accepting)return;const res=e.results[e.results.length-1];const alts=[...res].map(x=>x.transcript).filter(x=>x.trim());if(!alts.length)return;
   $("heard").textContent='Heard: "'+alts[0]+'"';if(isCommand(alts[0])||isRight(alts)||res.isFinal){accepting=false;listenTok++;const h=alts;closeRec().then(()=>handle(h))}};
  r.onerror=e=>{dbg("mic error: "+e.error);if(e.error=="not-allowed"||e.error=="service-not-allowed"){$("status").textContent="Microphone blocked. Allow mic access, and turn on Dictation in iPhone Settings.";running=false}};
- r.onend=()=>{if(rec===r)rec=null;if(my===listenTok&&running)setTimeout(()=>{if(my===listenTok&&running)openRec(my)},150)};
+ r.onend=()=>{if(rec===r)rec=null;if(my!==listenTok||!running)return;fails++;if(!handsFree||fails>4){accepting=false;$("status").textContent="Tap the big button and say your answer";dbg("mic paused, tap to answer");return}setTimeout(()=>{if(my===listenTok&&running)openRec(my)},300*fails)};
  $("status").textContent="Starting mic…";$("heard").textContent="";try{r.start()}catch(e){dbg("start failed");setTimeout(()=>{if(my===listenTok)openRec(my)},400)}}
 function isCommand(t){return/\b(stop|quit|repeat|again|skip|missed|mist|answer|give up)\b/i.test(t)}
 function isRight(alts){return alts.some(a=>q.type=="num"?parseCard(a)==q.card:parseNum(a)==q.num)}
@@ -135,5 +137,5 @@ function reveal(){if(!q)return;stopRec();missed[q.type][q.i]=1;save();updBadges(
 function skip(){next()}function repeatQ(){ask()}
 function upd(){$("score").textContent=`Score: ${right} / ${total}`+(total?` (${Math.round(100*right/total)}%)`:"");updBadges()}
 function stopAll(silent){killMic();stopAudio();show("home");if(!silent)playSeq(["over"],["Session over."])}
-$("rate").value=rate;setRate(rate);
+$("hf").checked=handsFree;$("rate").value=rate;setRate(rate);
 </script></body></html>
