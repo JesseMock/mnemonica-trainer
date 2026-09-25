@@ -15,10 +15,13 @@ button{font:inherit;border:0;border-radius:14px;padding:18px;font-size:1.1rem;fo
 </style></head><body>
 <h1>Mnemonica Voice Trainer</h1><p class="sub">Tap a mode, allow the microphone, and answer out loud.</p>
 <div class="modes" id="menu">
-<button class="m1" onclick="start(1)">Number → Card<br><small>"What is the card at number 3?"</small></button>
+<button class="m1" onclick="start(1)">Number → Card<br><small>It says "31", you say the card</small></button>
 <button class="m2" onclick="start(2)">Card → Number<br><small>"Four of clubs" → you say "one"</small></button>
 <button class="m3" onclick="start(3)">Mix &amp; Match<br><small>Both types, randomly mixed</small></button>
-</div>
+<div style="background:#1c212b;border-radius:14px;padding:14px;display:grid;gap:10px">
+<label>Voice speed: <b id="rateVal"></b><br><input type="range" min="0.7" max="2" step="0.1" id="rate" oninput="setRate(this.value)" style="width:100%"></label>
+<label>Voice:<br><select id="voiceSel" style="width:100%;font:inherit;padding:8px;border-radius:8px"></select></label>
+</div></div>
 <div id="train">
 <div id="modeName" style="color:#aab"></div><div id="card"></div><div id="status"></div><div id="heard"></div><div id="fb"></div><div id="score"></div>
 <div class="row"><button class="sec" onclick="repeatQ()">Repeat</button><button class="sec" onclick="reveal()">Answer</button><button class="sec" onclick="skip()">Skip</button><button class="sec" id="showBtn" onclick="toggleShow()">Show text: on</button></div>
@@ -36,17 +39,21 @@ const RW=[["A",/\b(ace|aces|a)\b/],["K",/\b(king|kings)\b/],["Q",/\b(queen|queen
 const SW=[["C",/(club|clover|cloves|clue)/],["H",/(heart|hart)/],["D",/(diamond)/],["S",/(spade|spayed|spaid)/]];
 function parseCard(t){t=t.toLowerCase();let s=null;for(const[k,r]of SW)if(r.test(t)){s=k;break}let r=null;for(const[k,re]of RW)if(re.test(t.replace(/\bof\b/g,""))){r=k;break}return r&&s?r+s:null}
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null,mode=0,q=null,running=false,right=0,total=0,show=true,weights=Array(52).fill(1),listenTimer;
-function say(t,cb){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.rate=1;u.onend=()=>cb&&cb();u.onerror=()=>cb&&cb();speechSynthesis.speak(u)}
+let sayTok=0,recTok=0,voice=null,rate=+(localStorage.rate||1.2);
+function say(t,cb){const my=++sayTok;let done=false;const fin=()=>{if(done||my!==sayTok)return;done=true;cb&&cb()};speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.rate=rate;if(voice)u.voice=voice;u.onend=fin;u.onerror=fin;setTimeout(()=>speechSynthesis.speak(u),60)}
+function loadVoices(){const vs=speechSynthesis.getVoices().filter(v=>v.lang.startsWith("en"));const sc=v=>(/premium/i.test(v.name)?3:/enhanced|siri|natural|neural|google/i.test(v.name)?2:0);vs.sort((a,b)=>sc(b)-sc(a));const sel=$("voiceSel");if(!sel)return;sel.innerHTML=vs.map((v,i)=>`<option value="${i}">${v.name} (${v.lang})</option>`).join("");const saved=vs.findIndex(v=>v.name==localStorage.voice);const idx=saved>=0?saved:0;sel.value=idx;voice=vs[idx]||null;sel.onchange=()=>{voice=vs[sel.value];localStorage.voice=voice.name;say("Eight of Clubs")}}
+speechSynthesis.onvoiceschanged=loadVoices;setTimeout(loadVoices,300);
+function setRate(v){rate=+v;localStorage.rate=v;$("rateVal").textContent=rate.toFixed(1)+"x"}
 function pick(){let tot=weights.reduce((a,b)=>a+b),r=Math.random()*tot;for(let i=0;i<52;i++){r-=weights[i];if(r<=0)return i}return 51}
 function $(i){return document.getElementById(i)}
 function start(m){if(!SR){alert("Speech recognition isn't supported in this browser. Try Chrome or Safari.");return}mode=m;running=true;right=total=0;$("menu").style.display="none";$("train").style.display="flex";$("modeName").textContent=["","Number → Card","Card → Number","Mix & Match"][m];upd();next()}
-function next(){if(!running)return;const i=pick();const type=mode==3?(Math.random()<.5?1:2):mode;q={i,type,card:STACK[i],num:i+1,tries:0};$("fb").textContent="";$("heard").textContent="";ask()}
-function qText(){return q.type==1?(mode==3?String(q.num):"What is the card at number "+q.num+"?"):name(q.card)}
-function ask(){if(!q)return;$("card").innerHTML=show?(q.type==1?"#"+q.num:`<span class="${"HD".includes(q.card[1])?"red":""}">${sym(q.card)}</span>`):"?";$("status").textContent="Speaking…";say(qText(),listen)}
-function listen(){if(!running)return;rec&&rec.abort();rec=new SR();rec.lang="en-US";rec.interimResults=false;rec.maxAlternatives=5;let got=false;
-rec.onresult=e=>{got=true;const alts=[...e.results[0]].map(a=>a.transcript);handle(alts)};
+function next(){if(!running)return;recTok++;const i=pick();const type=mode==3?(Math.random()<.5?1:2):mode;q={i,type,card:STACK[i],num:i+1,tries:0};$("fb").textContent="";$("heard").textContent="";ask()}
+function qText(){return q.type==1?String(q.num):name(q.card)}
+function ask(){if(!q)return;recTok++;if(rec){rec.onend=null;rec.abort()}$("card").innerHTML=show?(q.type==1?"#"+q.num:`<span class="${"HD".includes(q.card[1])?"red":""}">${sym(q.card)}</span>`):"?";$("status").textContent="Speaking…";say(qText(),listen)}
+function listen(){if(!running)return;const my=++recTok;if(rec){rec.onend=null;rec.onresult=null;rec.abort()}rec=new SR();rec.lang="en-US";rec.interimResults=false;rec.maxAlternatives=5;let got=false;
+rec.onresult=e=>{if(my!==recTok||got)return;got=true;const alts=[...e.results[0]].map(a=>a.transcript);handle(alts)};
 rec.onerror=e=>{if(e.error=="not-allowed"){$("status").textContent="Microphone blocked. Allow mic access and try again.";running=false}};
-rec.onend=()=>{if(running&&!got)setTimeout(listen,200)};
+rec.onend=()=>{if(running&&!got&&my===recTok)setTimeout(()=>{if(my===recTok)listen()},200)};
 $("status").textContent="Listening… 🎤";try{rec.start()}catch(e){}}
 function handle(alts){const t=alts[0].toLowerCase();$("heard").textContent='Heard: "'+alts[0]+'"';
 if(/\bstop\b|\bquit\b/.test(t))return stopAll();if(/\brepeat\b|\bagain\b/.test(t))return ask();if(/\bskip\b/.test(t))return skip();if(/\banswer\b|\bdon'?t know\b|\bgive up\b/.test(t))return reveal();
@@ -58,4 +65,5 @@ function skip(){rec&&rec.abort();next()}function repeatQ(){rec&&rec.abort();ask(
 function toggleShow(){show=!show;$("showBtn").textContent="Show text: "+(show?"on":"off");if(q)$("card").innerHTML=show?(q.type==1?"#"+q.num:sym(q.card)):"?"}
 function upd(){$("score").textContent=`Score: ${right} / ${total}`+(total?` (${Math.round(100*right/total)}%)`:"")}
 function stopAll(){running=false;rec&&rec.abort();speechSynthesis.cancel();$("train").style.display="none";$("menu").style.display="grid";say("Stopped. You got "+right+" out of "+total)}
+document.getElementById("rate").value=rate;setRate(rate);
 </script></body></html>
