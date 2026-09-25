@@ -71,9 +71,9 @@ function setRate(v){rate=+v;localStorage.rate=v;$("rateVal").textContent=rate.to
 let playTok=0;
 function playSeq(files,texts,cb){accepting=false;const my=++playTok;let i=0;
  const step=()=>{if(my!==playTok)return;if(i>=files.length){cb&&cb();return}const f=files[i],t=texts[i];i++;
-  let done=false;const fin=()=>{if(done||my!==playTok)return;done=true;step()};
+  let done=false,tm=null;const fin=()=>{clearTimeout(tm);if(done||my!==playTok)return;done=true;step()};
   player.onended=fin;player.onerror=()=>{if(done)return;done=true;speakFallback(t,()=>{if(my===playTok)step()})};
-  player.src="audio/"+f+".mp3";player.playbackRate=rate;player.play().catch(()=>{if(done)return;done=true;speakFallback(t,()=>{if(my===playTok)step()})})};
+  player.src="audio/"+f+".mp3";player.playbackRate=rate;tm=setTimeout(fin,4000);player.onplaying=()=>{clearTimeout(tm);const d=isFinite(player.duration)&&player.duration>0?player.duration:2.5;tm=setTimeout(fin,d/rate*1000+200)};player.play().catch(()=>{if(done)return;done=true;speakFallback(t,()=>{if(my===playTok)step()})})};
  step()}
 function speakFallback(t,cb){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.rate=rate;let d=false;const f=()=>{if(!d){d=true;cb()}};u.onend=f;u.onerror=f;speechSynthesis.speak(u)}
 function stopAudio(){playTok++;player.pause();speechSynthesis.cancel()}
@@ -107,7 +107,7 @@ let accepting=false,recOn=false,latest="",base="",listenAt=0;
 function stopRec(){accepting=false}
 function ensureRec(){if(rec)return;rec=new SR();rec.lang="en-US";rec.continuous=true;rec.interimResults=true;rec.maxAlternatives=3;
  rec.onstart=()=>{recOn=true};
- rec.onresult=e=>{const lr=e.results[e.results.length-1];latest=lr[0].transcript;if(!accepting||Date.now()-listenAt<500)return;for(let r=e.resultIndex;r<e.results.length;r++){const res=e.results[r];const alts=[...res].map(x=>x.transcript.startsWith(base)?x.transcript.slice(base.length):x.transcript).filter(x=>x.trim());if(!alts.length)continue;
+ rec.onresult=e=>{const lr=e.results[e.results.length-1];latest=lr[0].transcript;if(!accepting||Date.now()-listenAt<300)return;for(let r=e.resultIndex;r<e.results.length;r++){const res=e.results[r];const alts=[...res].map(x=>x.transcript.startsWith(base)?x.transcript.slice(base.length):x.transcript).filter(x=>x.trim());if(!alts.length)continue;
    $("heard").textContent='Heard: "'+alts[0]+'"';
    if(isCommand(alts[0])||isRight(alts)||res.isFinal){accepting=false;handle(alts);return}}};
  rec.onerror=e=>{if(e.error=="not-allowed"||e.error=="service-not-allowed"){$("status").textContent="Microphone blocked. Allow mic access, and turn on Dictation in iPhone Settings.";running=false}};
