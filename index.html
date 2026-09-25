@@ -37,9 +37,9 @@ select,input[type=range]{width:100%}select{font:inherit;padding:8px;border-radiu
 
 <div class="screen" id="train">
 <div class="c" id="modeName" style="color:#aab"></div>
-<div id="card"></div><div class="c" id="status"></div><div class="c" id="heard"></div><div class="c" id="fb"></div><div class="c" id="score"></div>
+<div id="card"></div><div class="c" id="status"></div><div class="c" id="heard"></div><div class="c" id="fb"></div><div class="c" id="score"></div><div class="c help" id="dbg"></div>
 <button class="m4" id="missBtn" onclick="goMissed()">Practice my missed ones <span class="badge" id="mNow">0</span></button>
-<div class="row"><button class="sec" onclick="if(running){if(rec){rec.onend=null;try{rec.abort()}catch(e){}rec=null;recOn=false}setTimeout(listen,300)}">🎤 Tap to talk</button><button class="sec" onclick="repeatQ()">Repeat</button><button class="sec" onclick="reveal()">Answer</button><button class="sec" onclick="skip()">Skip</button></div>
+<div class="row"><button class="sec" onclick="if(running)listen()">🎤 Tap to talk</button><button class="sec" onclick="repeatQ()">Repeat</button><button class="sec" onclick="reveal()">Answer</button><button class="sec" onclick="skip()">Skip</button></div>
 <button class="back" style="background:#c33" onclick="stopAll()">Stop</button>
 </div>
 
@@ -69,12 +69,12 @@ updBadges();
 let rate=+(localStorage.rate||1.2);const player=new Audio();player.preservesPitch=true;
 function setRate(v){rate=+v;localStorage.rate=v;$("rateVal").textContent=rate.toFixed(1)+"x"}
 let playTok=0;
-function playSeq(files,texts,cb){accepting=false;const my=++playTok;let i=0;
+function playSeq(files,texts,cb){accepting=false;const my=++playTok;let i=0;const go=()=>step();
  const step=()=>{if(my!==playTok)return;if(i>=files.length){cb&&cb();return}const f=files[i],t=texts[i];i++;
   let done=false,tm=null;const fin=()=>{clearTimeout(tm);if(done||my!==playTok)return;done=true;step()};
   player.onended=fin;player.onerror=()=>{if(done)return;done=true;speakFallback(t,()=>{if(my===playTok)step()})};
   player.src="audio/"+f+".mp3";player.playbackRate=rate;tm=setTimeout(fin,4000);player.onplaying=()=>{clearTimeout(tm);const d=isFinite(player.duration)&&player.duration>0?player.duration:2.5;tm=setTimeout(fin,d/rate*1000+200)};player.play().catch(()=>{if(done)return;done=true;speakFallback(t,()=>{if(my===playTok)step()})})};
- step()}
+ stopRec().then(()=>{if(my===playTok)go()})}
 function speakFallback(t,cb){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.rate=rate;let d=false;const f=()=>{if(!d){d=true;cb()}};u.onend=f;u.onerror=f;speechSynthesis.speak(u)}
 function stopAudio(){playTok++;player.pause();speechSynthesis.cancel()}
 
@@ -102,20 +102,23 @@ function ask(){if(!q||!running)return;stopRec();
  $("card").innerHTML=!showTxt?"?":q.type=="num"?"#"+q.num:`<span class="${"HD".includes(q.card[1])?"red":""}">${sym(q.card)}</span>`;
  $("status").textContent="Speaking…";
  q.type=="num"?playSeq(["n"+q.num],[String(q.num)],listen):playSeq(["c"+q.num],[cname(q.card)],listen)}
-/* one microphone session kept open for the whole practice; answers are only accepted while listening */
-let accepting=false,recOn=false,latest="",base="",listenAt=0;
-function stopRec(){accepting=false}
-function ensureRec(){if(rec)return;rec=new SR();rec.lang="en-US";rec.continuous=true;rec.interimResults=true;rec.maxAlternatives=3;
- rec.onstart=()=>{recOn=true};
- rec.onresult=e=>{const lr=e.results[e.results.length-1];latest=lr[0].transcript;if(!accepting||Date.now()-listenAt<300)return;for(let r=e.resultIndex;r<e.results.length;r++){const res=e.results[r];const alts=[...res].map(x=>x.transcript.startsWith(base)?x.transcript.slice(base.length):x.transcript).filter(x=>x.trim());if(!alts.length)continue;
-   $("heard").textContent='Heard: "'+alts[0]+'"';
-   if(isCommand(alts[0])||isRight(alts)||res.isFinal){accepting=false;handle(alts);return}}};
- rec.onerror=e=>{if(e.error=="not-allowed"||e.error=="service-not-allowed"){$("status").textContent="Microphone blocked. Allow mic access, and turn on Dictation in iPhone Settings.";running=false}};
- rec.onend=()=>{recOn=false;latest="";base="";if(running)setTimeout(()=>{if(running&&!recOn)try{rec.start()}catch(e){}},250)};
-}
-function startMic(){ensureRec();if(!recOn)try{rec.start()}catch(e){}}
-function killMic(){running=false;accepting=false;if(rec){rec.onend=null;try{rec.abort()}catch(e){}rec=null;recOn=false}}
-function listen(){if(!running)return;startMic();base=latest;listenAt=Date.now();accepting=true;$("heard").textContent="";$("status").textContent="Listening… 🎤"}
+/* fresh recognizer per question; always wait for the old one to fully close before speaking or listening */
+let accepting=false,listenTok=0,closing=null;
+function dbg(m){const d=$("dbg");if(d)d.textContent=m}
+function closeRec(){if(!rec)return Promise.resolve();if(closing)return closing;const r=rec;
+ closing=new Promise(res=>{let ok=false;const f=()=>{if(ok)return;ok=true;rec=rec===r?null:rec;closing=null;res()};r.onend=f;r.onresult=null;r.onerror=null;try{r.stop()}catch(e){f()}setTimeout(()=>{try{r.abort()}catch(e){}f()},800)});return closing}
+function stopRec(){accepting=false;listenTok++;return closeRec()}
+function killMic(){running=false;stopRec()}
+function startMic(){}
+function listen(){if(!running)return;const my=++listenTok;accepting=false;closeRec().then(()=>{if(my!==listenTok||!running)return;openRec(my)})}
+function openRec(my){const r=new SR();rec=r;r.lang="en-US";r.continuous=false;r.interimResults=true;r.maxAlternatives=3;const t0=Date.now();
+ r.onstart=()=>{dbg("mic on "+(Date.now()-t0)+"ms")};
+ r.onaudiostart=()=>{if(my===listenTok){accepting=true;$("status").textContent="Listening… 🎤"}};
+ r.onresult=e=>{if(my!==listenTok||!accepting)return;const res=e.results[e.results.length-1];const alts=[...res].map(x=>x.transcript).filter(x=>x.trim());if(!alts.length)return;
+  $("heard").textContent='Heard: "'+alts[0]+'"';if(isCommand(alts[0])||isRight(alts)||res.isFinal){accepting=false;listenTok++;const h=alts;closeRec().then(()=>handle(h))}};
+ r.onerror=e=>{dbg("mic error: "+e.error);if(e.error=="not-allowed"||e.error=="service-not-allowed"){$("status").textContent="Microphone blocked. Allow mic access, and turn on Dictation in iPhone Settings.";running=false}};
+ r.onend=()=>{if(rec===r)rec=null;if(my===listenTok&&running)setTimeout(()=>{if(my===listenTok&&running)openRec(my)},150)};
+ $("status").textContent="Starting mic…";$("heard").textContent="";try{r.start()}catch(e){dbg("start failed");setTimeout(()=>{if(my===listenTok)openRec(my)},400)}}
 function isCommand(t){return/\b(stop|quit|repeat|again|skip|missed|mist|answer|give up)\b/i.test(t)}
 function isRight(alts){return alts.some(a=>q.type=="num"?parseCard(a)==q.card:parseNum(a)==q.num)}
 function answerClip(){return q.type=="num"?["c"+q.num,cname(q.card)]:["n"+q.num,String(q.num)]}
