@@ -39,7 +39,7 @@ select,input[type=range]{width:100%}select{font:inherit;padding:8px;border-radiu
 <div class="c" id="modeName" style="color:#aab"></div>
 <div id="card"></div><div class="c" id="status"></div><div class="c" id="heard"></div><div class="c" id="fb"></div><div class="c" id="score"></div>
 <button class="m4" id="missBtn" onclick="goMissed()">Practice my missed ones <span class="badge" id="mNow">0</span></button>
-<div class="row"><button class="sec" onclick="if(running)listen()">🎤 Tap to talk</button><button class="sec" onclick="repeatQ()">Repeat</button><button class="sec" onclick="reveal()">Answer</button><button class="sec" onclick="skip()">Skip</button></div>
+<div class="row"><button class="sec" onclick="if(running){if(rec){rec.onend=null;try{rec.abort()}catch(e){}rec=null;recOn=false}setTimeout(listen,300)}">🎤 Tap to talk</button><button class="sec" onclick="repeatQ()">Repeat</button><button class="sec" onclick="reveal()">Answer</button><button class="sec" onclick="skip()">Skip</button></div>
 <button class="back" style="background:#c33" onclick="stopAll()">Stop</button>
 </div>
 
@@ -69,7 +69,7 @@ updBadges();
 let rate=+(localStorage.rate||1.2);const player=new Audio();player.preservesPitch=true;
 function setRate(v){rate=+v;localStorage.rate=v;$("rateVal").textContent=rate.toFixed(1)+"x"}
 let playTok=0;
-function playSeq(files,texts,cb){const my=++playTok;let i=0;
+function playSeq(files,texts,cb){accepting=false;const my=++playTok;let i=0;
  const step=()=>{if(my!==playTok)return;if(i>=files.length){cb&&cb();return}const f=files[i],t=texts[i];i++;
   let done=false;const fin=()=>{if(done||my!==playTok)return;done=true;step()};
   player.onended=fin;player.onerror=()=>{if(done)return;done=true;speakFallback(t,()=>{if(my===playTok)step()})};
@@ -89,7 +89,7 @@ function pool(){ // returns list of [type,index]
  return mode=="mnum"?n:mode=="mcard"?c:n.concat(c)}
 function start(m){if(!SR){alert("Voice answers aren't supported in this browser. Try Safari or Chrome.");return}
  mode=m;if(!pool().length){alert("No missed ones here yet. Nice work.");return}
- running=true;right=total=0;$("modeName").textContent=MODES[m];show("train");upd();
+ running=true;right=total=0;startMic();$("modeName").textContent=MODES[m];show("train");upd();
  player.src="audio/correct.mp3";player.volume=0;player.play().catch(()=>{}).finally(()=>{player.pause();player.volume=1;next()})}
 function goMissed(){if(!mList("num").length&&!mList("card").length){stopAudio();playSeq(["nomiss"],["No missed cards yet. Nice work!"],()=>{if(running)ask()});return}
  mode=mode=="num"&&mList("num").length?"mnum":mode=="card"&&mList("card").length?"mcard":"mall";
@@ -102,18 +102,22 @@ function ask(){if(!q||!running)return;stopRec();
  $("card").innerHTML=!showTxt?"?":q.type=="num"?"#"+q.num:`<span class="${"HD".includes(q.card[1])?"red":""}">${sym(q.card)}</span>`;
  $("status").textContent="Speaking…";
  q.type=="num"?playSeq(["n"+q.num],[String(q.num)],listen):playSeq(["c"+q.num],[cname(q.card)],listen)}
-let watch=null;
-function stopRec(){recTok++;clearTimeout(watch);if(rec){rec.onend=null;rec.onresult=null;rec.onerror=null;try{rec.abort()}catch(e){}rec=null}}
-function listen(){if(!running)return;stopRec();const my=recTok;player.pause();
- setTimeout(()=>{if(my!==recTok||!running)return;startRec(my)},350)}
-function startRec(my){rec=new SR();rec.lang="en-US";rec.interimResults=false;rec.continuous=false;rec.maxAlternatives=5;let got=false,heardAny=false;
- const retry=()=>{if(running&&!got&&my===recTok){if(rec){rec.onend=null;try{rec.abort()}catch(e){}}setTimeout(()=>{if(my===recTok&&running)startRec(my)},300)}};
- rec.onresult=e=>{if(my!==recTok||got)return;got=true;clearTimeout(watch);handle([...e.results[0]].map(a=>a.transcript))};
- rec.onspeechstart=()=>{heardAny=true};
+/* one microphone session kept open for the whole practice; answers are only accepted while listening */
+let accepting=false,recOn=false,latest="",base="",listenAt=0;
+function stopRec(){accepting=false}
+function ensureRec(){if(rec)return;rec=new SR();rec.lang="en-US";rec.continuous=true;rec.interimResults=true;rec.maxAlternatives=3;
+ rec.onstart=()=>{recOn=true};
+ rec.onresult=e=>{const lr=e.results[e.results.length-1];latest=lr[0].transcript;if(!accepting||Date.now()-listenAt<500)return;for(let r=e.resultIndex;r<e.results.length;r++){const res=e.results[r];const alts=[...res].map(x=>x.transcript.startsWith(base)?x.transcript.slice(base.length):x.transcript).filter(x=>x.trim());if(!alts.length)continue;
+   $("heard").textContent='Heard: "'+alts[0]+'"';
+   if(isCommand(alts[0])||isRight(alts)||res.isFinal){accepting=false;handle(alts);return}}};
  rec.onerror=e=>{if(e.error=="not-allowed"||e.error=="service-not-allowed"){$("status").textContent="Microphone blocked. Allow mic access, and turn on Dictation in iPhone Settings.";running=false}};
- rec.onend=retry;
- clearTimeout(watch);watch=setTimeout(function w(){if(my!==recTok||got)return;if(heardAny){heardAny=false;watch=setTimeout(w,4000);return}retry()},7000);
- $("status").textContent="Listening… 🎤";try{rec.start()}catch(e){setTimeout(retry,400)}}
+ rec.onend=()=>{recOn=false;latest="";base="";if(running)setTimeout(()=>{if(running&&!recOn)try{rec.start()}catch(e){}},250)};
+}
+function startMic(){ensureRec();if(!recOn)try{rec.start()}catch(e){}}
+function killMic(){running=false;accepting=false;if(rec){rec.onend=null;try{rec.abort()}catch(e){}rec=null;recOn=false}}
+function listen(){if(!running)return;startMic();base=latest;listenAt=Date.now();accepting=true;$("heard").textContent="";$("status").textContent="Listening… 🎤"}
+function isCommand(t){return/\b(stop|quit|repeat|again|skip|missed|mist|answer|give up)\b/i.test(t)}
+function isRight(alts){return alts.some(a=>q.type=="num"?parseCard(a)==q.card:parseNum(a)==q.num)}
 function answerClip(){return q.type=="num"?["c"+q.num,cname(q.card)]:["n"+q.num,String(q.num)]}
 function handle(alts){const t=alts[0].toLowerCase();$("heard").textContent='Heard: "'+alts[0]+'"';
  if(/\b(stop|quit)\b/.test(t))return stopAll();if(/\b(repeat|again)\b/.test(t))return ask();if(/\bskip\b/.test(t))return next();
@@ -127,6 +131,6 @@ function reveal(){if(!q)return;stopRec();missed[q.type][q.i]=1;save();updBadges(
  $("fb").innerHTML='<span class="bad">'+(q.type=="num"?sym(q.card):"#"+q.num)+'</span>';playSeq(["its",a],["The answer is",at],next)}
 function skip(){next()}function repeatQ(){ask()}
 function upd(){$("score").textContent=`Score: ${right} / ${total}`+(total?` (${Math.round(100*right/total)}%)`:"");updBadges()}
-function stopAll(silent){running=false;stopRec();stopAudio();show("home");if(!silent)playSeq(["over"],["Session over."])}
+function stopAll(silent){killMic();stopAudio();show("home");if(!silent)playSeq(["over"],["Session over."])}
 $("rate").value=rate;setRate(rate);
 </script></body></html>
