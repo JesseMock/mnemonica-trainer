@@ -39,7 +39,7 @@ select,input[type=range]{width:100%}select{font:inherit;padding:8px;border-radiu
 <div class="c" id="modeName" style="color:#aab"></div>
 <div id="card"></div><div class="c" id="status"></div><div class="c" id="heard"></div><div class="c" id="fb"></div><div class="c" id="score"></div>
 <button class="m4" id="missBtn" onclick="goMissed()">Practice my missed ones <span class="badge" id="mNow">0</span></button>
-<div class="row"><button class="sec" onclick="repeatQ()">Repeat</button><button class="sec" onclick="reveal()">Answer</button><button class="sec" onclick="skip()">Skip</button></div>
+<div class="row"><button class="sec" onclick="if(running)listen()">🎤 Tap to talk</button><button class="sec" onclick="repeatQ()">Repeat</button><button class="sec" onclick="reveal()">Answer</button><button class="sec" onclick="skip()">Skip</button></div>
 <button class="back" style="background:#c33" onclick="stopAll()">Stop</button>
 </div>
 
@@ -102,12 +102,18 @@ function ask(){if(!q||!running)return;stopRec();
  $("card").innerHTML=!showTxt?"?":q.type=="num"?"#"+q.num:`<span class="${"HD".includes(q.card[1])?"red":""}">${sym(q.card)}</span>`;
  $("status").textContent="Speaking…";
  q.type=="num"?playSeq(["n"+q.num],[String(q.num)],listen):playSeq(["c"+q.num],[cname(q.card)],listen)}
-function stopRec(){recTok++;if(rec){rec.onend=null;rec.onresult=null;rec.onerror=null;try{rec.abort()}catch(e){}rec=null}}
-function listen(){if(!running)return;stopRec();const my=recTok;rec=new SR();rec.lang="en-US";rec.interimResults=false;rec.maxAlternatives=5;let got=false;
- rec.onresult=e=>{if(my!==recTok||got)return;got=true;handle([...e.results[0]].map(a=>a.transcript))};
+let watch=null;
+function stopRec(){recTok++;clearTimeout(watch);if(rec){rec.onend=null;rec.onresult=null;rec.onerror=null;try{rec.abort()}catch(e){}rec=null}}
+function listen(){if(!running)return;stopRec();const my=recTok;player.pause();
+ setTimeout(()=>{if(my!==recTok||!running)return;startRec(my)},350)}
+function startRec(my){rec=new SR();rec.lang="en-US";rec.interimResults=false;rec.continuous=false;rec.maxAlternatives=5;let got=false,heardAny=false;
+ const retry=()=>{if(running&&!got&&my===recTok){if(rec){rec.onend=null;try{rec.abort()}catch(e){}}setTimeout(()=>{if(my===recTok&&running)startRec(my)},300)}};
+ rec.onresult=e=>{if(my!==recTok||got)return;got=true;clearTimeout(watch);handle([...e.results[0]].map(a=>a.transcript))};
+ rec.onspeechstart=()=>{heardAny=true};
  rec.onerror=e=>{if(e.error=="not-allowed"||e.error=="service-not-allowed"){$("status").textContent="Microphone blocked. Allow mic access, and turn on Dictation in iPhone Settings.";running=false}};
- rec.onend=()=>{if(running&&!got&&my===recTok)setTimeout(()=>{if(my===recTok)listen()},250)};
- $("status").textContent="Listening… 🎤";try{rec.start()}catch(e){}}
+ rec.onend=retry;
+ clearTimeout(watch);watch=setTimeout(function w(){if(my!==recTok||got)return;if(heardAny){heardAny=false;watch=setTimeout(w,4000);return}retry()},7000);
+ $("status").textContent="Listening… 🎤";try{rec.start()}catch(e){setTimeout(retry,400)}}
 function answerClip(){return q.type=="num"?["c"+q.num,cname(q.card)]:["n"+q.num,String(q.num)]}
 function handle(alts){const t=alts[0].toLowerCase();$("heard").textContent='Heard: "'+alts[0]+'"';
  if(/\b(stop|quit)\b/.test(t))return stopAll();if(/\b(repeat|again)\b/.test(t))return ask();if(/\bskip\b/.test(t))return next();
